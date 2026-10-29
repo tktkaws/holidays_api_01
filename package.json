@@ -7,11 +7,14 @@
   },
   "scripts": {
     "dev": "astro dev",
+    "update:holidays": "node scripts/update-holidays.mjs",
+    "test": "node --test --test-isolation=none",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^7.4.4"
+    "astro": "^7.4.4",
+    "csv-parse": "^7.0.3"
   }
 }

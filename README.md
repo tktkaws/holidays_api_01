@@ -1,43 +1,114 @@
-# Astro Starter Kit: Minimal
+# 日本の祝日 API
+
+内閣府の祝日・休日CSVから生成したJSONを静的ファイルとして配信します。振替休日なども内閣府の名称のまま収録します。
+
+## API
+
+- `/api/v1/date.json` — 全期間
+- `/api/v1/2026/date.json` — 指定年（4桁）
+- `/api/v1/metadata.json` — 出典、取得日時、収録年、件数
+
+祝日一覧は `{"2026-01-01": "元日"}` のように日付をキーとするJSONです。未収録年は404です。対象範囲はデータの更新により変わります。
+
+## 実装の仕組み
+
+全体の流れは、**CSVの取得 → 検証・保存 → JSONの生成 → 画面表示**です。APIや画面を開くたびに内閣府へアクセスする構成ではありません。更新スクリプトを実行した後、ビルドと公開を行うことで、公開中のデータが新しくなります。
+
+### 1. 内閣府のCSVを取得する
+
+`scripts/update-holidays.mjs` を `npm run update:holidays` で実行すると、[内閣府のCSV](https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv)を `fetch` で取得します。待ち続けないよう、取得には10秒のタイムアウトを設定しています。通信エラーやHTTPエラーが発生した場合は処理を終了します。
+
+CSVはShift_JISとしてバイト列から復号します。UTF-8として読み取ると日本語が文字化けするためです。復号した文字列は `csv-parse` で解析し、引用符で囲まれた値や値に含まれるカンマもCSVの規則に従って読み取ります。
+
+### 2. データを検証・整形する
+
+取得したデータが想定した形式か、保存前に確認します。
+
+- ヘッダーが「国民の祝日・休日月日」「国民の祝日・休日名称」の2列であること。
+- 各行が2列で、日付が `年/月/日` の形式かつ実在する日付であり、名称が空でないこと。
+- 同じ日付が重複しておらず、データが1件以上あること。
+
+日付は `2026/1/1` のような形式から `2026-01-01` に変換し、昇順に並べます。名称は前後の空白を取り除き、それ以外はCSVの表記を使います。「休日」も除外しません。
+
+保存済みデータがある場合は、新しいデータとの追加・削除・名称変更を一覧で出力します。全件数が以前の90%未満になった場合、または以前収録されていた年が消えた場合は更新を中止します。この検査だけで内容の正確さを保証できるわけではないため、公開前に差分を確認してください。
+
+### 3. 検証済みデータを保存する
+
+祝日とメタデータを `src/data/holidays.json` にまとめて保存します。構造は次のとおりです（値は例です）。
+
+```json
+{
+  "metadata": {
+    "source": "https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv",
+    "fetchedAt": "2026-10-29T05:53:00.660Z",
+    "years": ["2026", "2027"],
+    "count": 2
+  },
+  "holidays": {
+    "2026-01-01": "元日",
+    "2027-01-01": "元日"
+  }
+}
+```
+
+`source` はCSVのURL、`fetchedAt` はUTCの取得日時、`years` は収録年、`count` は全件数です。実際のファイルにはCSVに含まれる全期間が入ります。
+
+更新時は検証を終えてから一時ファイルに書き込み、保存先を置き換えます。取得や検証が失敗した場合は既存の保存データを保持します。祝日とメタデータを同じファイルに入れることで、別々に更新されることも避けています。
+
+### 4. API用のJSONを生成する
+
+Astroは `src/pages/api/v1/` 以下のエンドポイントから、ビルド時に静的JSONを生成します。
+
+- `date.json.ts` は `holidays` の全件を `/api/v1/date.json` に出力します。
+- `[year]/date.json.ts` はメタデータの収録年から `getStaticPaths()` で生成先を決め、全件から該当年を抽出します。例えば2026年のデータは `/api/v1/2026/date.json` に出力されます。
+- `metadata.json.ts` は `metadata` を `/api/v1/metadata.json` に出力します。
+
+各祝日JSONは日付をキー、名称を値とするオブジェクトです。収録されていない年のファイルは生成しないため、そのURLへのアクセスは静的ホストで404になります。404の本文やヘッダーはホストによって異なります。
+
+生成されたファイルは `dist/` に置かれます。JSONの配信にサーバー側でCSVを読み直す処理は不要です。ただし、別のサイトからブラウザー経由でAPIを利用する場合は、公開先のCORS設定も確認してください。
+
+### 5. トップページにJSONを表示する
+
+`src/pages/index.astro` は、保存済みメタデータから収録期間、件数、取得日時、年の選択肢を表示します。取得日時は日本時間に変換して表示します。
+
+初期表示では全件APIを取得し、年を選ぶと対応する年別APIを `fetch` します。レスポンスのJSONを整形し、テキストとして表示します。APIのURLも選択に合わせて変わり、リンクから直接開けます。
+
+読み込み中と件数を表示し、HTTPエラー・通信エラー・JSONの解析エラーは取得失敗として表示します。選択を続けて変更した場合は、古いリクエストの応答で新しい表示を上書きしないようにしています。URLにはAstroの `base` 設定も反映します。
+
+## 開発・公開
+
+Node.js 22.23.4以降が必要です。
 
 ```sh
-npm create astro@latest -- --template minimal
+npm install
+npm run dev -- --background
+npm run test
+npm run build
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+開発サーバーは `npm run astro -- dev status`、`npm run astro -- dev logs`、`npm run astro -- dev stop` で管理します。`dist/` を静的ホストに公開してください。サブパスに配置する場合は `astro.config.mjs` の `base` を設定します。JSONのMIMEタイプ、404、キャッシュは公開先でも確認してください。
 
-## 🚀 Project Structure
+## データの更新
 
-Inside of your Astro project, you'll see the following folders and files:
-
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
+```sh
+npm run update:holidays
+npm run test
+npm run build
 ```
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+追加・削除・名称変更の出力を確認してから公開してください。大幅な件数減少や収録年の消失で更新が止まった場合は、内閣府の情報と照らして原因を確認してください。変更がなくても取得日時は更新されます。
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+## 定期実行について
 
-Any static assets, like images, can be placed in the `public/` directory.
+**現在、定期実行と失敗通知は設定されていません。** 月1回を目安に上記の更新手順を実行し、翌年分の公表や制度変更時にも確認してください。
 
-## 🧞 Commands
+例えばWindowsのタスク スケジューラで自動取得する場合は、次のように設定できます。
 
-All commands are run from the root of the project, from a terminal:
+1. Node.jsと依存関係をインストールしたPCでタスクを作成し、月1回のトリガーを設定します。
+2. 操作を「プログラムの開始」にし、プログラムに `node.exe` の絶対パス、引数に `scripts/update-holidays.mjs`、開始場所にこのプロジェクトの絶対パスを設定します。実行アカウントにはネットワーク接続とプロジェクトへの書き込み権限が必要です。
+3. タスクの履歴や終了コードを確認し、失敗を見逃さない運用を用意します。PCが停止中やオフラインの場合は実行できないため、必要に応じて実行を再試行する設定にします。
+4. 更新後の差分を確認し、`npm run test` と `npm run build` を実行して、生成された `dist/` を公開先へ反映します。タスクによるCSV取得だけでは公開済みのAPIは更新されません。
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+サーバーやCIで自動化する場合も、取得・差分確認・テスト・ビルド・公開・失敗通知をそれぞれ設定してください。公開先と承認方法に合わせて構成します。
 
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+出典: [内閣府「国民の祝日」について](https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html)

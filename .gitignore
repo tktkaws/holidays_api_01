@@ -22,3 +22,5 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+_docs/祝日API実装計画.md
+_docs/日本の祝日情報を取得する方法.md
