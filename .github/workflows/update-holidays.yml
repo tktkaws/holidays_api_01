@@ -1,0 +1,55 @@
+name: Update holidays
+
+on:
+  schedule:
+    # 日本時間で指定: 分 時 日 月 曜日。現在は毎年10月29日16時。
+    # 日時を変えるときはこのcronの数字を編集する。
+    - cron: '0 16 29 10 *'
+      timezone: Asia/Tokyo
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'テスト実行（PRを作成・更新しない）'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-holidays
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci
+      - name: 祝日データを取得
+        run: npm run update:holidays
+      - run: npm test
+      - run: npm run build
+      - name: 翌年と生成したJSONを確認
+        run: node scripts/check-holiday-build.mjs
+      - name: 更新プルリクエストを作成
+        if: github.event_name == 'schedule' || inputs.dry_run == false
+        uses: peter-evans/create-pull-request@v7.0.11
+        with:
+          branch: automation/update-holidays
+          add-paths: src/data/holidays.json
+          commit-message: 'chore: update holiday data'
+          title: '祝日データを更新'
+          body: |
+            内閣府のCSVから祝日データを取得し、翌年の収録、テスト、ビルドおよび生成JSONを確認しました。
+
+            追加・削除・名称の変更は、このPRの差分と実行ログで確認してください。取得日時はデータに変更がなくても更新されます。
+
+            マージ後、公開先への反映とAPIの確認が必要です。

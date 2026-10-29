@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHolidays } from '../scripts/update-holidays.mjs';
 import { readFile } from 'node:fs/promises';
+import { checkHolidayBuild, nextJapaneseYear } from '../scripts/check-holiday-build.mjs';
 
 // ASCII fixtures use an ASCII-compatible subset of Shift_JIS.
 const encode = text => new TextEncoder().encode(text);
@@ -23,4 +24,11 @@ test('snapshot includes holidays and consistent metadata', async () => {
   assert.equal(snapshot.holidays['2026-09-22'], '休日');
   assert.equal(Object.keys(snapshot.holidays).length, snapshot.metadata.count);
   assert.deepEqual([...new Set(Object.keys(snapshot.holidays).map(date => date.slice(0, 4)))], snapshot.metadata.years);
+});
+test('next year follows the Japanese calendar year', () => {
+  assert.equal(nextJapaneseYear(new Date('2026-12-31T14:59:59Z')), '2027');
+  assert.equal(nextJapaneseYear(new Date('2026-12-31T15:00:00Z')), '2028');
+});
+test('build check rejects a year missing from the snapshot', async () => {
+  await assert.rejects(checkHolidayBuild('9999'), /未収録/);
 });
